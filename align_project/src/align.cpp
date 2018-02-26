@@ -1,6 +1,9 @@
 #include "align.h"
 #include <string>
 
+#define _USE_MATH_DEFINES
+#include <cmath> 
+
 using std::string;
 using std::cout;
 using std::endl;
@@ -29,8 +32,8 @@ long double calculateMSE(
             tie(r1, g1, b1) = img1(row1 + i, col1 + j);
             tie(r2, g2, b2) = img2(row2 + i, col2 + j);
 
-            c1 = (0.2126f * r1 + 0.7152f * g1 + 0.0722f * b1);
-            c2 = (0.2126f * r2 + 0.7152f * g2 + 0.0722f * b2);
+            c1 = (0.2126 * r1 + 0.7152 * g1 + 0.0722 * b1);
+            c2 = (0.2126 * r2 + 0.7152 * g2 + 0.0722 * b2);
 
             sum += (c1 - c2) * (c1 - c2);
         }
@@ -57,8 +60,8 @@ long double calculateCC(
             tie(r1, g1, b1) = img1(row1 + i, col1 + j);
             tie(r2, g2, b2) = img2(row2 + i, col2 + j);
 
-            c1 = (0.2126f * r1 + 0.7152f * g1 + 0.0722f * b1);
-            c2 = (0.2126f * r2 + 0.7152f * g2 + 0.0722f * b2);
+            c1 = (0.2126 * r1 + 0.7152 * g1 + 0.0722 * b1);
+            c2 = (0.2126 * r2 + 0.7152 * g2 + 0.0722 * b2);
 
             sum += c1 * c2;
         }
@@ -149,6 +152,7 @@ void align_two_image(
 Image align(Image srcImage, bool isPostprocessing, std::string postprocessingType, double fraction, bool isMirror, 
             bool isInterp, bool isSubpixel, double subScale)
 {
+    #if 0
     int n_rows  = srcImage.n_rows;
     int n_cols = srcImage.n_cols;
     int out_n_rows = n_rows / 3;
@@ -164,7 +168,7 @@ Image align(Image srcImage, bool isPostprocessing, std::string postprocessingTyp
                 uint r, g, b, br;
 
                 tie(r, g, b) = srcImage(k * out_n_rows + i, j);
-                br = (0.2126f * r + 0.7152f * g + 0.0722f * b);
+                br = (0.2126 * r + 0.7152 * g + 0.0722 * b);
 
                 switch (k) {
                 case 0:
@@ -188,6 +192,10 @@ Image align(Image srcImage, bool isPostprocessing, std::string postprocessingTyp
 
     align_two_image(rImage, gImage, 4, 2, rgImage, true); // 100, 010 => 110
     align_two_image(rgImage, bImage, 6, 1, outImage, true); // 110, 001 => 111
+    #endif
+
+    //Image outImage = gaussian(srcImage, 1.4, 2);
+    Image outImage = canny(srcImage, 1, 2);
 
     return outImage;
 }
@@ -219,11 +227,68 @@ Image resize(Image src_image, double scale) {
 }
 
 Image custom(Image src_image, Matrix<double> kernel) {
-    // Function custom is useful for making concrete linear filtrations
-    // like gaussian or sobel. So, we assume that you implement custom
-    // and then implement other filtrations using this function.
-    // sobel_x and sobel_y are given as an example.
-    return src_image;
+    int n_rows = src_image.n_rows;
+    int n_cols = src_image.n_cols;
+    int rad = kernel.n_rows / 2;
+
+    Image extImage(n_rows + 2 * rad, n_cols + 2 * rad);
+
+    for (int i = 0; i < n_rows; i++)
+        for (int j = 0; j < n_cols; j++)
+            extImage(i + rad, j + rad) = src_image(i, j);
+
+    for (int k = 0; k < rad; k++) {
+        for (int i = 0; i < n_rows; i++) {
+            extImage(i + rad, k) = src_image(i, rad - k);
+            extImage(i + rad, n_cols + rad + k) = src_image(i, (n_cols - 1) - k);
+        }
+
+        for (int j = 0; j < n_cols; j++) {
+            extImage(k, j + rad) = src_image(rad - k, j);
+            extImage(n_rows + rad + k, j + rad) = src_image((n_rows - 1) - k, j);
+        }
+    }
+
+    for (int i = 0; i < rad; i++) {
+        for (int j = 0; j < rad; j++) {
+            extImage(i, j) = src_image(rad - i, rad - j);
+            extImage(i + n_rows + rad, j) = src_image((n_rows - 1) - i, rad - j);
+            extImage(i, j + n_cols + rad) = src_image(rad - i, (n_cols - 1) - j);
+            extImage(i + n_rows + rad, j + n_cols + rad) = src_image((n_rows - 1) - i, (n_cols - 1) - j);
+        }
+    }
+
+    Image outImage(n_rows, n_cols);
+
+    for (int i = 0; i < n_rows; i++) {
+        for (int j = 0; j < n_cols; j++) {
+            int R, G, B;
+            double r_sum, g_sum, b_sum;
+
+            r_sum = g_sum = b_sum = 0;
+            for (int k1 = -rad; k1 <= rad; k1++) {
+                for (int k2 = -rad; k2 <= rad; k2++) {
+                    uint r, g, b;
+
+                    tie(r, g, b) = extImage(i + rad + k1, j + rad + k2);
+                    r_sum += r * kernel(k1 + rad, k2 + rad);
+                    g_sum += g * kernel(k1 + rad, k2 + rad);
+                    b_sum += b * kernel(k1 + rad, k2 + rad);
+                }   
+            }
+
+            R = r_sum;
+            G = g_sum; 
+            B = b_sum;
+
+            outImage(i, j) = make_tuple(
+                max(min(R, 255), 0), 
+                max(min(G, 255), 0), 
+                max(min(B, 255), 0));
+        }
+    }
+
+    return outImage;
 }
 
 Image autocontrast(Image src_image, double fraction) {
@@ -231,8 +296,30 @@ Image autocontrast(Image src_image, double fraction) {
 }
 
 Image gaussian(Image src_image, double sigma, int radius)  {
-    return src_image;
+    int kernel_size = 2 * radius + 1;
+    Matrix<double> kernel(kernel_size, kernel_size);
+
+    long double sum = 0.0;
+    for (int i = -radius; i <= radius; i++) {
+        for (int j = -radius; j <= radius; j++) {
+            double value;
+
+            value = 1.0 / (2 * M_PI * sigma * sigma * exp((i * i + j * j) / (2 * sigma * sigma)));
+            sum = sum + value;
+
+            kernel(radius + i, radius + j) = value;
+        }
+    }
+
+    double koef = 1 / sum;
+    for (int i = 0; i < kernel_size; ++i)
+        for (int j = 0; j < kernel_size; ++j)
+            kernel(i, j) *= koef;
+
+    return custom(src_image, kernel);
 }
+
+/* TODO: separable guassian */
 
 Image gaussian_separable(Image src_image, double sigma, int radius) {
     return src_image;
@@ -251,5 +338,44 @@ Image median_const(Image src_image, int radius) {
 }
 
 Image canny(Image src_image, int threshold1, int threshold2) {
-    return src_image;
+    int n_rows  = src_image.n_rows;
+    int n_cols = src_image.n_cols;
+
+    Image bluredImage;
+    Image Kx, Ky, K(n_rows, n_cols);
+
+    Image grayImg(n_rows, n_cols);
+
+    for (int i = 0; i < n_rows; i++) {
+        for (int j = 0; j < n_cols; j++) {
+            uint r, g, b, br;
+
+            tie(r, g, b) = src_image(i, j);
+            br = (0.2126 * r + 0.7152 * g + 0.0722 * b);
+
+            grayImg(i, j) = make_tuple(br, br, br);
+        }
+    }
+
+    bluredImage = gaussian(grayImg, 1.4, 2);
+
+    Kx = sobel_x(bluredImage);
+    Ky = sobel_y(bluredImage);
+
+    for (int i = 0; i < n_rows; i++) {
+        for (int j = 0; j < n_cols; j++) {
+            uint b1, b2, bret;
+
+            tie(b1, b1, b1) = Kx(i, j);
+            tie(b2, b2, b2) = Ky(i, j);
+
+            bret = sqrt(b1 * b1 + b2 * b2);
+
+            K(i, j) = make_tuple(bret, bret, bret);
+        }
+    }
+
+
+
+    return K;
 }
