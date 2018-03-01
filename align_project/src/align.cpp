@@ -3,6 +3,7 @@
 
 #define _USE_MATH_DEFINES
 #include <cmath> 
+#include <queue>
 
 using std::string;
 using std::cout;
@@ -12,11 +13,46 @@ using std::make_tuple;
 using std::tie;
 using std::max;
 using std::min;
+using std::queue;
 
 #define mdRow 15
 #define mdCol 15
 
-long double calculateMSE(
+static const int kDx[8] = {0, -1, -1, -1, 0, 1, 1, 1};
+static const int kDy[8] = {1, 1, 0, -1, -1, -1, 0, 1};
+
+enum {
+    USE_R_CHANNEL = 4, 
+    USE_G_CHANNEL = 2,
+    USE_B_CHANNEL = 1
+};
+
+static uint brightness(tuple<uint, uint, uint> color) {
+    uint r, g, b;
+
+    tie(r, g, b) = color;
+
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b);
+}
+
+static int G_value(Image &Kx, Image &Ky, int row, int col) 
+{
+    int n_rows = Kx.n_rows;
+    int n_cols = Kx.n_cols;
+
+    if (row < 0 || col < 0 || row >= n_rows || col >= n_cols)
+        return 0;
+
+    uint rx, gx, bx;
+    uint ry, gy, by;
+
+    tie(rx, gx, bx) = Kx(row, col);
+    tie(ry, gy, by) = Ky(row, col);
+
+    return sqrt(bx * bx + by * by);
+}
+
+static long double calculateMSE(
     Image img1, Image img2, 
     int row1, int col1,
     int row2, int col2,
@@ -25,15 +61,10 @@ long double calculateMSE(
     long long sum = 0;
     for (int i = 0; i < n_rows; i++) {
         for (int j = 0; j < n_cols; j++) {
-            int r1, g1, b1;
-            int r2, g2, b2;
             int c1, c2;
 
-            tie(r1, g1, b1) = img1(row1 + i, col1 + j);
-            tie(r2, g2, b2) = img2(row2 + i, col2 + j);
-
-            c1 = (0.2126 * r1 + 0.7152 * g1 + 0.0722 * b1);
-            c2 = (0.2126 * r2 + 0.7152 * g2 + 0.0722 * b2);
+            c1 = brightness(img1(row1 + i, col1 + j));
+            c2 = brightness(img2(row2 + i, col2 + j));
 
             sum += (c1 - c2) * (c1 - c2);
         }
@@ -44,7 +75,7 @@ long double calculateMSE(
     return result;
 }
 
-long double calculateCC(
+static long double calculateCC(
     Image img1, Image img2, 
     int row1, int col1,
     int row2, int col2,
@@ -53,15 +84,10 @@ long double calculateCC(
     long long sum = 0;
     for (int i = 0; i < n_rows; i++) {
         for (int j = 0; j < n_cols; j++) {
-            int r1, g1, b1;
-            int r2, g2, b2;
             int c1, c2;
 
-            tie(r1, g1, b1) = img1(row1 + i, col1 + j);
-            tie(r2, g2, b2) = img2(row2 + i, col2 + j);
-
-            c1 = (0.2126 * r1 + 0.7152 * g1 + 0.0722 * b1);
-            c2 = (0.2126 * r2 + 0.7152 * g2 + 0.0722 * b2);
+            c1 = brightness(img1(row1 + i, col1 + j));
+            c2 = brightness(img2(row2 + i, col2 + j));
 
             sum += c1 * c2;
         }
@@ -72,7 +98,7 @@ long double calculateCC(
     return result;
 }
 
-void align_two_image(
+static void align_two_image(
     Image &img1, Image &img2, 
     int mask1, int mask2, 
     Image &outImage, bool useMSE) 
@@ -130,18 +156,18 @@ void align_two_image(
             uint r, g, b;
             r = g = b = 0;
 
-            if (mask1 & 4)
+            if (mask1 & USE_R_CHANNEL)
                 r = r1;
-            if (mask1 & 2)
+            if (mask1 & USE_G_CHANNEL)
                 g = g1;
-            if (mask1 & 1)
+            if (mask1 & USE_B_CHANNEL)
                 b = b1;
 
-            if (mask2 & 4)
+            if (mask2 & USE_R_CHANNEL)
                 r = r2;
-            if (mask2 & 2)
+            if (mask2 & USE_G_CHANNEL)
                 g = g2;
-            if (mask2 & 1)
+            if (mask2 & USE_B_CHANNEL)
                 b = b2;
 
             outImage(i, j) = make_tuple(r, g, b);
@@ -152,7 +178,25 @@ void align_two_image(
 Image align(Image srcImage, bool isPostprocessing, std::string postprocessingType, double fraction, bool isMirror, 
             bool isInterp, bool isSubpixel, double subScale)
 {
-    #if 0
+    /*
+    Image cannyImage = canny(srcImage, 5, 75);
+
+    int x, y, rows, cols;
+
+    cut_frame(cannyImage, x, y, rows, cols);
+
+    Image cropImage(rows, cols);
+
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            cropImage(i, j) = srcImage(i + x, j + y);
+        }
+    }
+
+    save_image(cropImage, "/home/alexmihy/mash1718/task1/template/out/crop.bmp");
+
+    srcImage = cropImage;
+    */
     int n_rows  = srcImage.n_rows;
     int n_cols = srcImage.n_cols;
     int out_n_rows = n_rows / 3;
@@ -165,10 +209,9 @@ Image align(Image srcImage, bool isPostprocessing, std::string postprocessingTyp
     for (int k = 0; k < 3; k++) {
         for (int i = 0; i < out_n_rows; i++) {
             for (int j = 0; j < out_n_cols; j++) {
-                uint r, g, b, br;
+                uint br;
 
-                tie(r, g, b) = srcImage(k * out_n_rows + i, j);
-                br = (0.2126 * r + 0.7152 * g + 0.0722 * b);
+                br = brightness(srcImage(k * out_n_rows + i, j));
 
                 switch (k) {
                 case 0:
@@ -187,15 +230,19 @@ Image align(Image srcImage, bool isPostprocessing, std::string postprocessingTyp
         }
     }
 
+    save_image(rImage, "/home/alexmihy/mash1718/task1/template/out/R.bmp");
+    save_image(gImage, "/home/alexmihy/mash1718/task1/template/out/G.bmp");
+    save_image(bImage, "/home/alexmihy/mash1718/task1/template/out/B.bmp");
+
+    Image gwImage = gray_world(srcImage);
+
+    save_image(gwImage, "/home/alexmihy/mash1718/task1/template/out/gw.bmp");
+
     Image rgImage(out_n_rows, out_n_cols);
     Image outImage(out_n_rows, out_n_cols);
 
-    align_two_image(rImage, gImage, 4, 2, rgImage, true); // 100, 010 => 110
-    align_two_image(rgImage, bImage, 6, 1, outImage, true); // 110, 001 => 111
-    #endif
-
-    //Image outImage = gaussian(srcImage, 1.4, 2);
-    Image outImage = canny(srcImage, 1, 2);
+    align_two_image(rImage, gImage, USE_R_CHANNEL, USE_G_CHANNEL, rgImage, true);
+    align_two_image(rgImage, bImage, USE_R_CHANNEL | USE_G_CHANNEL, USE_B_CHANNEL, outImage, true);
 
     return outImage;
 }
@@ -215,11 +262,56 @@ Image sobel_y(Image src_image) {
 }
 
 Image unsharp(Image src_image) {
-    return src_image;
+    Matrix<double> kernel = {{-0.17, -0.66, -0.17}, 
+                             {-0.66, 4.33, -0.66}, 
+                             {-0.17, -0.66, -0.17}};
+
+    return custom(src_image, kernel);
 }
 
 Image gray_world(Image src_image) {
-    return src_image;
+    int n_rows = src_image.n_rows;
+    int n_cols = src_image.n_cols;
+
+    long long r_sum, g_sum, b_sum;
+    r_sum = g_sum = b_sum = 0;
+
+    for (int i = 0; i < n_rows; i++) {
+        for (int j = 0; j < n_cols; j++) {
+            uint r, g, b;
+
+            tie(r, g, b) = src_image(i, j);
+
+            r_sum += r;
+            g_sum += g;
+            b_sum += b;
+        }
+    }
+
+    int r_avg, g_avg, b_avg, avg;
+
+    r_avg = r_sum / (n_rows * n_cols);
+    g_avg = g_sum / (n_rows * n_cols);
+    b_avg = b_sum / (n_rows * n_cols);
+    avg = (r_avg + g_avg + b_avg) / 3;
+
+    Image outImage(n_rows, n_cols);
+
+    for (int i = 0; i < n_rows; i++) {
+        for (int j = 0; j < n_cols; j++) {
+            int r, g, b;
+
+            tie(r, g, b) = src_image(i, j);
+
+            outImage(i, j) = make_tuple(
+                max(min(r * avg / r_avg, 255), 0), 
+                max(min(g * avg / g_avg, 255), 0), 
+                max(min(b * avg / b_avg, 255), 0));
+
+        }
+    }
+
+    return outImage;
 }
 
 Image resize(Image src_image, double scale) {
@@ -271,6 +363,8 @@ Image custom(Image src_image, Matrix<double> kernel) {
                     uint r, g, b;
 
                     tie(r, g, b) = extImage(i + rad + k1, j + rad + k2);
+
+
                     r_sum += r * kernel(k1 + rad, k2 + rad);
                     g_sum += g * kernel(k1 + rad, k2 + rad);
                     b_sum += b * kernel(k1 + rad, k2 + rad);
@@ -337,45 +431,226 @@ Image median_const(Image src_image, int radius) {
     return src_image;
 }
 
+static int find_row(Image &img, int row1, int row2) 
+{
+    int n_rows = img.n_rows;
+    int n_cols = img.n_cols;
+    
+    if (row1 > row2 || row2 >= n_rows)
+        return -1;
+
+    int max_sum = 0, max_row = -1;
+
+    for (int i = row1; i <= row2; i++) {
+        int sum = 0;
+
+        for (int j = 0; j < n_cols; j++) {
+            if (brightness(img(i, j)) >= 1)
+                sum++;
+        }
+
+        if (sum > max_sum) {
+            max_sum = sum;
+            max_row = i;
+        }
+    }
+
+    return max_row;
+}
+
+static void suppress_row(Image &img, int row) 
+{
+    static int magic = 3;
+    int n_rows = img.n_rows;
+    int n_cols = img.n_cols;
+
+    for (int i = max(0, row - magic); i < min(n_rows, row + magic + 1); i++) {
+        for (int j = 0; j < n_cols; j++) {
+            img(i, j) = make_tuple(0, 0, 0);
+        }
+    }
+}
+
+static int find_col(Image &img, int col1, int col2) 
+{
+    int n_rows = img.n_rows;
+    int n_cols = img.n_cols;
+
+    if (col1 > col2 || col2 >= n_cols)
+        return -1;
+
+    int max_sum = 0, max_col = -1;
+
+    for (int j = col1; j <= col2; j++) {
+        int sum = 0;
+
+        for (int i = 0; i < n_rows; i++) {
+            if (brightness(img(i, j)) >= 1)
+                sum++;
+        }
+
+        if (sum > max_sum) {
+            max_sum = sum;
+            max_col = j;
+        }
+    }
+
+    return max_col;
+}
+
+static void suppress_col(Image &img, int col) 
+{
+    static int magic = 3;
+    int n_rows = img.n_rows;
+    int n_cols = img.n_cols;
+
+    for (int j = max(0, col - magic); j < min(n_cols, col + magic + 1); j++) {
+        for (int i = 0; i < n_rows; i++) {
+            img(i, j) = make_tuple(0, 0, 0);
+        }
+    }
+}
+
+void cut_frame(Image src_image, int &x, int &y, int &rows, int &cols) 
+{
+    int row1, row2;
+    int col1, col2;
+    int dRow = src_image.n_rows / 7;
+    int dCol = src_image.n_cols / 7;
+
+    row1 = find_row(src_image, 0, dRow);
+    suppress_row(src_image, row1);
+    row1 = max(row1, find_row(src_image, 0, dRow));
+
+    row2 = find_row(src_image, src_image.n_rows - dRow - 1, src_image.n_rows - 1);
+    suppress_row(src_image, row2);
+    row2 = min(row2, find_row(src_image, src_image.n_rows - dRow - 1, src_image.n_rows - 1));
+
+    col1 = find_col(src_image, 0, dCol);
+    suppress_col(src_image, col1);
+    col1 = max(col1, find_col(src_image, 0, dCol));
+
+    col2 = find_col(src_image, src_image.n_cols - dCol - 1, src_image.n_cols - 1);
+    suppress_col(src_image, col2);
+    col2 = min(col2, find_col(src_image, src_image.n_cols - dCol - 1, src_image.n_cols - 1));
+
+    x = row1;
+    y = col1;
+    rows = row2 - row1 + 1;
+    cols = col2 - col1 + 1;
+}
+
+static void bfs(Matrix<int> &marks, Matrix<int> &was, int x, int y, int n_rows, int n_cols) 
+{
+    queue<tuple<int, int>> q;
+
+    q.push(make_tuple(x, y));
+    was(x, y) = 1;
+
+    while (!q.empty()) {
+        int cx, cy;
+
+        tie(cx, cy) = q.front();
+        q.pop();
+
+        for (int k = 0; k < 8; k++) {
+            int nx, ny;
+
+            nx = cx + kDx[k];
+            ny = cy + kDy[k];
+
+            if (nx < 0 || ny < 0 || nx >= n_rows || ny >= n_cols)
+                continue;
+
+            if (!marks(nx, ny) || was(nx, ny))
+                continue;
+
+            was(nx, ny) = 1;
+            q.push(make_tuple(nx, ny));
+        }
+
+    }
+}
+
 Image canny(Image src_image, int threshold1, int threshold2) {
     int n_rows  = src_image.n_rows;
     int n_cols = src_image.n_cols;
 
     Image bluredImage;
-    Image Kx, Ky, K(n_rows, n_cols);
+    Image Kx, Ky;
+
+    bluredImage = gaussian(src_image, 1.4, 2);
 
     Image grayImg(n_rows, n_cols);
 
     for (int i = 0; i < n_rows; i++) {
         for (int j = 0; j < n_cols; j++) {
-            uint r, g, b, br;
+            uint br;
 
-            tie(r, g, b) = src_image(i, j);
-            br = (0.2126 * r + 0.7152 * g + 0.0722 * b);
+            br = brightness(bluredImage(i, j));
 
             grayImg(i, j) = make_tuple(br, br, br);
         }
     }
 
-    bluredImage = gaussian(grayImg, 1.4, 2);
+    Kx = sobel_x(grayImg);
+    Ky = sobel_y(grayImg);
 
-    Kx = sobel_x(bluredImage);
-    Ky = sobel_y(bluredImage);
+    Matrix<int> marks(n_rows, n_cols), was(n_rows, n_cols);
+    Image cannyMap(n_rows, n_cols);
 
     for (int i = 0; i < n_rows; i++) {
         for (int j = 0; j < n_cols; j++) {
-            uint b1, b2, bret;
+            uint bx, by;
+            double phi, b_phi;
 
-            tie(b1, b1, b1) = Kx(i, j);
-            tie(b2, b2, b2) = Ky(i, j);
+            tie(bx, bx, bx) = Kx(i, j);
+            tie(by, by, by) = Ky(i, j);
 
-            bret = sqrt(b1 * b1 + b2 * b2);
+            phi = atan2(by, bx);
+            if (phi < 0)
+                phi = 2 * M_PI + phi;
+            b_phi = phi > M_PI ? phi - M_PI : phi + M_PI;
 
-            K(i, j) = make_tuple(bret, bret, bret);
+            int sector1 = phi / (2 * M_PI) * 8;
+            int sector2 = b_phi / (2 * M_PI) * 8;
+
+            int G, G1, G2, br;
+
+            G = G_value(Kx, Ky, i, j);
+            G1 = G_value(Kx, Ky, i + kDx[sector1], j + kDy[sector1]);
+            G2 = G_value(Kx, Ky, i + kDx[sector2], j + kDy[sector2]);
+            br = max(min(G, 255), 0);
+
+            marks(i, j) = was(i, j) = 0;
+            cannyMap(i, j) = make_tuple(br, br, br);
+            if (G < G1 || G < G2)
+                cannyMap(i, j) = make_tuple(0, 0, 0);
+
+            if (G < threshold1) {
+                cannyMap(i, j) = make_tuple(0, 0, 0);
+            } else if (G > threshold2) {
+                marks(i, j) = 2;
+            } else {
+                marks(i, j) = 1;
+            }
+
         }
     }
 
+    for (int i = 0; i < n_rows; i++) {
+        for (int j = 0; j < n_cols; j++) {
+            if (marks(i, j) == 2 && !was(i, j)) 
+                bfs(marks, was, i, j, n_rows, n_cols);
+        }
+    }
 
+    for (int i = 0; i < n_rows; i++) {
+        for (int j = 0; j < n_cols; j++) {
+            if (!was(i, j))
+                cannyMap(i, j) = make_tuple(0, 0, 0);
+        }
+    }
 
-    return K;
+    return cannyMap;
 }

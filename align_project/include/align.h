@@ -30,4 +30,6 @@ Image median_linear(Image src_image, int radius);
 
 Image median_const(Image src_image, int radius);
 
+void cut_frame(Image src_image, int &x, int &y, int &rows, int &cols);
+
 Image canny(Image src_image, int threshold1, int threshold2);
