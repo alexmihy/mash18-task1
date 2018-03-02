@@ -180,21 +180,11 @@ static void align_two_image(
     }
 }
 
-// TODO:
 Image align(Image srcImage, bool isPostprocessing, std::string postprocessingType, double fraction, bool isMirror, 
             bool isInterp, bool isSubpixel, double subScale)
 {
     useMirror = isMirror;
 
-    Matrix<double> kernel = {{0, 0, 0},
-                             {0, 1, 0},
-                             {0, 0, 0}};
-
-    Image extImage = custom(srcImage, kernel);
-
-    return extImage;
-
-    ///*
     Image cannyImage = canny(srcImage, 5, 75);
 
     int x, y, rows, cols;
@@ -209,12 +199,8 @@ Image align(Image srcImage, bool isPostprocessing, std::string postprocessingTyp
         }
     }
 
-    save_image(cropImage, "/home/alexmihy/mash1718/task1/template/out/crop.bmp");
-
-    srcImage = cropImage;
-    //*/
-    int n_rows  = srcImage.n_rows;
-    int n_cols = srcImage.n_cols;
+    int n_rows  = cropImage.n_rows;
+    int n_cols = cropImage.n_cols;
     int out_n_rows = n_rows / 3;
     int out_n_cols = n_cols;
 
@@ -227,17 +213,17 @@ Image align(Image srcImage, bool isPostprocessing, std::string postprocessingTyp
             for (int j = 0; j < out_n_cols; j++) {
                 uint br;
 
-                br = brightness(srcImage(k * out_n_rows + i, j));
+                br = brightness(cropImage(k * out_n_rows + i, j));
 
                 switch (k) {
                 case 0:
-                    rImage(i, j) = make_tuple(br, br, br);
+                    bImage(i, j) = make_tuple(br, br, br);
                     break;
                 case 1:
                     gImage(i, j) = make_tuple(br, br, br);
                     break;
                 case 2:
-                    bImage(i, j) = make_tuple(br, br, br);
+                    rImage(i, j) = make_tuple(br, br, br);
                     break;
                 default:
                     break;
@@ -246,17 +232,22 @@ Image align(Image srcImage, bool isPostprocessing, std::string postprocessingTyp
         }
     }
 
-    save_image(rImage, "/home/alexmihy/mash1718/task1/template/out/R.bmp");
-    save_image(gImage, "/home/alexmihy/mash1718/task1/template/out/G.bmp");
-    save_image(bImage, "/home/alexmihy/mash1718/task1/template/out/B.bmp");
-
     Image rgImage(out_n_rows, out_n_cols);
-    Image outImage(out_n_rows, out_n_cols);
+    Image alignedImage(out_n_rows, out_n_cols);
 
     align_two_image(rImage, gImage, USE_R_CHANNEL, USE_G_CHANNEL, rgImage, true);
-    save_image(rgImage, "/home/alexmihy/mash1718/task1/template/out/RG.bmp");
+    align_two_image(rgImage, bImage, USE_R_CHANNEL | USE_G_CHANNEL, USE_B_CHANNEL, alignedImage, true);
 
-    align_two_image(rgImage, bImage, USE_R_CHANNEL | USE_G_CHANNEL, USE_B_CHANNEL, outImage, true);
+    Image outImage;
+
+    if (isPostprocessing) {
+        if (postprocessingType == "--gray-world")
+            outImage = gray_world(alignedImage);
+        else if (postprocessingType == "--unsharp")
+            outImage = unsharp(alignedImage);
+    } else {
+        outImage = alignedImage;
+    }
 
     return outImage;
 }
@@ -428,18 +419,37 @@ Image gaussian(Image src_image, double sigma, int radius)  {
         }
     }
 
-    double koef = 1 / sum;
     for (int i = 0; i < kernel_size; ++i)
         for (int j = 0; j < kernel_size; ++j)
-            kernel(i, j) *= koef;
+            kernel(i, j) /= sum;
 
     return custom(src_image, kernel);
 }
 
-/* TODO: separable guassian */
-
 Image gaussian_separable(Image src_image, double sigma, int radius) {
-    return src_image;
+    int kernel_size = 2 * radius + 1;
+    Matrix<double> kernel_x(kernel_size, kernel_size);
+    Matrix<double> kernel_y(kernel_size, kernel_size);
+
+    long double sum = 0.0;
+    for (int i = -radius; i <= radius; i++) {
+        double value;
+
+        value = 1.0 / (2 * M_PI * sigma * sigma * exp((i * i) / (2 * sigma * sigma)));
+        sum = sum + value;
+
+        kernel_x(0, radius + i) = value;
+        kernel_y(radius + i, 0) = value;
+    }
+
+    for (int i = 0; i < kernel_size; i++) {
+        kernel_x(0, i) /= sum;
+        kernel_y(i, 0) /= sum;
+    }
+
+    Image gaussXImage = custom(src_image, kernel_x);
+
+    return custom(gaussXImage, kernel_y);
 }
 
 Image median(Image src_image, int radius) {
@@ -570,8 +580,6 @@ void cut_frame(Image src_image, int &x, int &y, int &rows, int &cols)
         outImage(row1, j) = make_tuple(255, 0, 0);
         outImage(row2, j) = make_tuple(255, 0, 0);            
     }
-
-
     save_image(outImage, "/home/alexmihy/mash1718/task1/template/out/rounded.bmp");
 }
 
@@ -686,9 +694,6 @@ Image canny(Image src_image, int threshold1, int threshold2) {
                 cannyMap(i, j) = make_tuple(0, 0, 0);
         }
     }
-
-
-    save_image(cannyMap, "/home/alexmihy/mash1718/task1/template/out/map.bmp");
 
     return cannyMap;
 }
