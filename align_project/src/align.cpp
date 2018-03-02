@@ -15,8 +15,9 @@ using std::max;
 using std::min;
 using std::queue;
 
-#define mdRow 15
-#define mdCol 15
+#define kDRow 15
+#define kDCol 15
+#define kCutMagic 0
 
 static const int kDx[8] = {0, -1, -1, -1, 0, 1, 1, 1};
 static const int kDy[8] = {1, 1, 0, -1, -1, -1, 0, 1};
@@ -27,7 +28,10 @@ enum {
     USE_B_CHANNEL = 1
 };
 
-static uint brightness(tuple<uint, uint, uint> color) {
+static bool useMirror = false;
+
+static uint brightness(tuple<uint, uint, uint> color)
+{
     uint r, g, b;
 
     tie(r, g, b) = color;
@@ -111,12 +115,12 @@ static void align_two_image(
 
     long double metric = -1.0;
     int m_row1 = 0, m_col1 = 0, m_row2 = 0, m_col2 = 0, m_n_rows = 0, m_n_cols = 0;
-    for (int dRow = -mdRow; dRow <= mdRow; dRow++) {
-        for (int dCol = -mdCol; dCol <= mdCol; dCol++) {
+    for (int dRow = -kDRow; dRow <= kDRow; dRow++) {
+        for (int dCol = -kDCol; dCol <= kDCol; dCol++) {
             int c_row1 = max(0, dRow); 
             int c_col1 = max(0, dCol);
-            int c_row2 = min(0, abs(dRow));
-            int c_col2 = min(0, abs(dCol));
+            int c_row2 = -min(0, dRow);
+            int c_col2 = -min(0, dCol);
             int c_n_rows = n_rows - abs(dRow);
             int c_n_cols = n_cols - abs(dCol);
 
@@ -160,8 +164,9 @@ static void align_two_image(
                 r = r1;
             if (mask1 & USE_G_CHANNEL)
                 g = g1;
-            if (mask1 & USE_B_CHANNEL)
+            if (mask1 & USE_B_CHANNEL) {
                 b = b1;
+            }
 
             if (mask2 & USE_R_CHANNEL)
                 r = r2;
@@ -175,10 +180,21 @@ static void align_two_image(
     }
 }
 
+// TODO:
 Image align(Image srcImage, bool isPostprocessing, std::string postprocessingType, double fraction, bool isMirror, 
             bool isInterp, bool isSubpixel, double subScale)
 {
-    /*
+    useMirror = isMirror;
+
+    Matrix<double> kernel = {{0, 0, 0},
+                             {0, 1, 0},
+                             {0, 0, 0}};
+
+    Image extImage = custom(srcImage, kernel);
+
+    return extImage;
+
+    ///*
     Image cannyImage = canny(srcImage, 5, 75);
 
     int x, y, rows, cols;
@@ -196,7 +212,7 @@ Image align(Image srcImage, bool isPostprocessing, std::string postprocessingTyp
     save_image(cropImage, "/home/alexmihy/mash1718/task1/template/out/crop.bmp");
 
     srcImage = cropImage;
-    */
+    //*/
     int n_rows  = srcImage.n_rows;
     int n_cols = srcImage.n_cols;
     int out_n_rows = n_rows / 3;
@@ -234,14 +250,12 @@ Image align(Image srcImage, bool isPostprocessing, std::string postprocessingTyp
     save_image(gImage, "/home/alexmihy/mash1718/task1/template/out/G.bmp");
     save_image(bImage, "/home/alexmihy/mash1718/task1/template/out/B.bmp");
 
-    Image gwImage = gray_world(srcImage);
-
-    save_image(gwImage, "/home/alexmihy/mash1718/task1/template/out/gw.bmp");
-
     Image rgImage(out_n_rows, out_n_cols);
     Image outImage(out_n_rows, out_n_cols);
 
     align_two_image(rImage, gImage, USE_R_CHANNEL, USE_G_CHANNEL, rgImage, true);
+    save_image(rgImage, "/home/alexmihy/mash1718/task1/template/out/RG.bmp");
+
     align_two_image(rgImage, bImage, USE_R_CHANNEL | USE_G_CHANNEL, USE_B_CHANNEL, outImage, true);
 
     return outImage;
@@ -262,9 +276,9 @@ Image sobel_y(Image src_image) {
 }
 
 Image unsharp(Image src_image) {
-    Matrix<double> kernel = {{-0.17, -0.66, -0.17}, 
-                             {-0.66, 4.33, -0.66}, 
-                             {-0.17, -0.66, -0.17}};
+    Matrix<double> kernel = {{-1.0 / 6, -2.0 / 3, -1.0 / 6}, 
+                             {-2.0 / 3, 13.0 / 3, -2.0 / 3}, 
+                             {-1.0 / 6, -2.0 / 3, -1.0 / 6}};
 
     return custom(src_image, kernel);
 }
@@ -323,32 +337,41 @@ Image custom(Image src_image, Matrix<double> kernel) {
     int n_cols = src_image.n_cols;
     int rad = kernel.n_rows / 2;
 
-    Image extImage(n_rows + 2 * rad, n_cols + 2 * rad);
+    Image extImage;
 
-    for (int i = 0; i < n_rows; i++)
-        for (int j = 0; j < n_cols; j++)
-            extImage(i + rad, j + rad) = src_image(i, j);
+    if (useMirror) {
+        extImage = Image(n_rows + 2 * rad, n_cols + 2 * rad);
 
-    for (int k = 0; k < rad; k++) {
-        for (int i = 0; i < n_rows; i++) {
-            extImage(i + rad, k) = src_image(i, rad - k);
-            extImage(i + rad, n_cols + rad + k) = src_image(i, (n_cols - 1) - k);
+        for (int i = 0; i < n_rows; i++)
+            for (int j = 0; j < n_cols; j++)
+                extImage(i + rad, j + rad) = src_image(i, j);
+
+        for (int k = 0; k < rad; k++) {
+            for (int i = 0; i < n_rows; i++) {
+                extImage(i + rad, k) = src_image(i, rad - k);
+                extImage(i + rad, n_cols + rad + k) = src_image(i, (n_cols - 1) - k);
+            }
+
+            for (int j = 0; j < n_cols; j++) {
+                extImage(k, j + rad) = src_image(rad - k, j);
+                extImage(n_rows + rad + k, j + rad) = src_image((n_rows - 1) - k, j);
+            }
         }
 
-        for (int j = 0; j < n_cols; j++) {
-            extImage(k, j + rad) = src_image(rad - k, j);
-            extImage(n_rows + rad + k, j + rad) = src_image((n_rows - 1) - k, j);
+        for (int i = 0; i < rad; i++) {
+            for (int j = 0; j < rad; j++) {
+                extImage(i, j) = src_image(rad - i, rad - j);
+                extImage(i + n_rows + rad, j) = src_image((n_rows - 1) - i, rad - j);
+                extImage(i, j + n_cols + rad) = src_image(rad - i, (n_cols - 1) - j);
+                extImage(i + n_rows + rad, j + n_cols + rad) = src_image((n_rows - 1) - i, (n_cols - 1) - j);
+            }
         }
+    } else {
+        extImage = src_image.deep_copy();
     }
 
-    for (int i = 0; i < rad; i++) {
-        for (int j = 0; j < rad; j++) {
-            extImage(i, j) = src_image(rad - i, rad - j);
-            extImage(i + n_rows + rad, j) = src_image((n_rows - 1) - i, rad - j);
-            extImage(i, j + n_cols + rad) = src_image(rad - i, (n_cols - 1) - j);
-            extImage(i + n_rows + rad, j + n_cols + rad) = src_image((n_rows - 1) - i, (n_cols - 1) - j);
-        }
-    }
+    n_rows = extImage.n_rows - 2 * rad;
+    n_cols = extImage.n_cols - 2 * rad;
 
     Image outImage(n_rows, n_cols);
 
@@ -460,11 +483,10 @@ static int find_row(Image &img, int row1, int row2)
 
 static void suppress_row(Image &img, int row) 
 {
-    static int magic = 3;
     int n_rows = img.n_rows;
     int n_cols = img.n_cols;
 
-    for (int i = max(0, row - magic); i < min(n_rows, row + magic + 1); i++) {
+    for (int i = max(0, row - kCutMagic); i < min(n_rows, row + kCutMagic); i++) {
         for (int j = 0; j < n_cols; j++) {
             img(i, j) = make_tuple(0, 0, 0);
         }
@@ -500,11 +522,10 @@ static int find_col(Image &img, int col1, int col2)
 
 static void suppress_col(Image &img, int col) 
 {
-    static int magic = 3;
     int n_rows = img.n_rows;
     int n_cols = img.n_cols;
 
-    for (int j = max(0, col - magic); j < min(n_cols, col + magic + 1); j++) {
+    for (int j = max(0, col - kCutMagic); j < min(n_cols, col + kCutMagic); j++) {
         for (int i = 0; i < n_rows; i++) {
             img(i, j) = make_tuple(0, 0, 0);
         }
@@ -515,8 +536,8 @@ void cut_frame(Image src_image, int &x, int &y, int &rows, int &cols)
 {
     int row1, row2;
     int col1, col2;
-    int dRow = src_image.n_rows / 7;
-    int dCol = src_image.n_cols / 7;
+    int dRow = src_image.n_rows / 10;
+    int dCol = src_image.n_cols / 10;
 
     row1 = find_row(src_image, 0, dRow);
     suppress_row(src_image, row1);
@@ -538,6 +559,20 @@ void cut_frame(Image src_image, int &x, int &y, int &rows, int &cols)
     y = col1;
     rows = row2 - row1 + 1;
     cols = col2 - col1 + 1;
+
+    Image outImage = src_image.deep_copy();
+
+    for (uint i = 0; i < src_image.n_rows; i++) {
+        outImage(i, col1) = make_tuple(255, 0, 0);
+        outImage(i, col2) = make_tuple(255, 0, 0);
+    }
+    for (uint j = 0; j < src_image.n_cols; j++) {
+        outImage(row1, j) = make_tuple(255, 0, 0);
+        outImage(row2, j) = make_tuple(255, 0, 0);            
+    }
+
+
+    save_image(outImage, "/home/alexmihy/mash1718/task1/template/out/rounded.bmp");
 }
 
 static void bfs(Matrix<int> &marks, Matrix<int> &was, int x, int y, int n_rows, int n_cols) 
@@ -651,6 +686,9 @@ Image canny(Image src_image, int threshold1, int threshold2) {
                 cannyMap(i, j) = make_tuple(0, 0, 0);
         }
     }
+
+
+    save_image(cannyMap, "/home/alexmihy/mash1718/task1/template/out/map.bmp");
 
     return cannyMap;
 }
